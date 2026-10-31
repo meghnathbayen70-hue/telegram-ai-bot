@@ -2,60 +2,52 @@
 import os
 import requests
 import telebot
+from flask import Flask, request
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+
+@app.get("/")
+def home():
+    return "Telegram AI Bot is running!"
+
+@app.post("/webhook")
+def webhook():
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+        return "Unauthorized", 403
+
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
 
 @bot.message_handler(commands=["start"])
 def start(message):
-    bot.reply_to(
-        message,
-        "Hello! 👋 Main tumhara AI Assistant hoon. Mujhse kuch bhi poochho!"
-    )
+    bot.reply_to(message, "Hello! Main tumhara AI Assistant hoon. Kuch bhi poochho!")
 
-@bot.message_handler(commands=["help"])
-def help_command(message):
-    bot.reply_to(
-        message,
-        "Bas mujhe koi bhi question bhejo. Main AI se jawab dunga!"
-    )
-
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda message: bool(message.text))
 def ai_reply(message):
     try:
-        response = requests.post(
+        r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json={
                 "model": "llama-3.3-70b-versatile",
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful AI assistant. Reply in the user's language."
-                    },
-                    {
-                        "role": "user",
-                        "content": message.text
-                    }
+                    {"role": "system", "content": "You are a helpful AI assistant. Reply in Hindi or the user's language."},
+                    {"role": "user", "content": message.text}
                 ]
             },
             timeout=30
         )
-
-        data = response.json()
-        answer = data["choices"][0]["message"]["content"]
-
+        r.raise_for_status()
+        answer = r.json()["choices"][0]["message"]["content"]
         bot.reply_to(message, answer)
-
     except Exception:
-        bot.reply_to(
-            message,
-            "Sorry, abhi AI se connect nahi ho pa raha. Thodi der baad try karo."
-        )
+        bot.reply_to(message, "Sorry, abhi AI service available nahi hai.")
 
-bot.infinity_polling()
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
